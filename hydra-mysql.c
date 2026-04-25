@@ -36,7 +36,7 @@ extern int32_t internal__hydra_recv(int32_t socket, char *buf, int32_t length);
 extern int32_t hydra_data_ready_timed(int32_t socket, long sec, long usec);
 
 extern hydra_option hydra_options;
-extern char *HYDRA_EXIT;
+extern const unsigned char HYDRA_EXIT[5];
 char mysqlsalt[9];
 
 /* modified hydra_receive_line, I've striped code which changed every 0x00 to
@@ -180,13 +180,17 @@ int32_t start_mysql(int32_t sock, char *ip, int32_t port, unsigned char options,
   char *response = NULL, *login = NULL, *pass = NULL;
   unsigned long response_len;
   char res = 0;
+#ifdef LIBMYSQLCLIENT
   char *database = NULL;
+#endif
 
   login = hydra_get_next_login();
   pass = hydra_get_next_password();
 
+#ifdef LIBMYSQLCLIENT
   if (miscptr)
     database = miscptr;
+#endif
 
   /* read server greeting */
   res = hydra_mysql_init(sock);
