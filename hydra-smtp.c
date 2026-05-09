@@ -17,10 +17,9 @@ char *smtp_read_server_capacity(int32_t sock) {
       if (isdigit((int32_t)buf[0]) && buf[3] == ' ')
         resp = 1;
       else {
-        if (buf[strlen(buf) - 1] == '\n')
-          buf[strlen(buf) - 1] = 0;
-        if (buf[strlen(buf) - 1] == '\r')
-          buf[strlen(buf) - 1] = 0;
+        size_t blen = strlen(buf);
+        while (blen > 0 && (buf[blen - 1] == '\n' || buf[blen - 1] == '\r'))
+          buf[--blen] = 0;
 #ifdef NO_STRRCHR
         if ((ptr = rindex(buf, '\n')) != NULL) {
 #else
@@ -104,7 +103,12 @@ int32_t start_smtp(int32_t s, char *ip, int32_t port, unsigned char options, cha
       return 3;
     }
     memset(buffer, 0, sizeof(buffer));
-    from64tobits((char *)buffer, buf + 4);
+    if (from64tobits_n((char *)buffer, buf + 4, sizeof(buffer)) < 0) {
+      hydra_report(stderr, "[ERROR] SMTP CRAM-MD5 AUTH: oversized challenge\n");
+      free(buf);
+      free(preplogin);
+      return 3;
+    }
     free(buf);
 
     memset(buffer2, 0, sizeof(buffer2));
@@ -136,7 +140,11 @@ int32_t start_smtp(int32_t s, char *ip, int32_t port, unsigned char options, cha
       return 3;
     }
     memset(buffer, 0, sizeof(buffer));
-    from64tobits((char *)buffer, buf + 4);
+    if (from64tobits_n((char *)buffer, buf + 4, sizeof(buffer)) < 0) {
+      hydra_report(stderr, "[ERROR] SMTP DIGEST-MD5 AUTH: oversized challenge\n");
+      free(buf);
+      return 3;
+    }
     free(buf);
 
     if (debug)
@@ -173,7 +181,11 @@ int32_t start_smtp(int32_t s, char *ip, int32_t port, unsigned char options, cha
       return 3;
     }
     // recover challenge
-    from64tobits((char *)buf1, buf + 4);
+    if (from64tobits_n((char *)buf1, buf + 4, sizeof(buf1)) < 0) {
+      hydra_report(stderr, "[ERROR] SMTP NTLM AUTH: oversized challenge\n");
+      free(buf);
+      return 3;
+    }
     free(buf);
 
     buildAuthResponse((tSmbNtlmAuthChallenge *)buf1, (tSmbNtlmAuthResponse *)buf2, 0, login, pass, NULL, NULL);
@@ -231,7 +243,10 @@ int32_t start_smtp(int32_t s, char *ip, int32_t port, unsigned char options, cha
   if (smtp_auth_mechanism == AUTH_DIGESTMD5) {
     if (strstr(buf, "334") != NULL && strlen(buf) >= 8) {
       memset(buffer2, 0, sizeof(buffer2));
-      from64tobits((char *)buffer2, buf + 4);
+      if (from64tobits_n((char *)buffer2, buf + 4, sizeof(buffer2)) < 0) {
+        free(buf);
+        return 3;
+      }
       if (strstr(buffer2, "rspauth=") != NULL) {
         hydra_report_found_host(port, ip, "smtp", fp);
         hydra_completed_pair_found();
@@ -301,10 +316,12 @@ void service_smtp(char *ip, int32_t sp, unsigned char options, char *miscptr, FI
         free(buf);
         hydra_child_exit(2);
       }
-      while (strstr(buf, "220 ") == NULL) {
+      while (buf != NULL && strstr(buf, "220 ") == NULL) {
         free(buf);
         buf = hydra_receive_line(sock);
       }
+      if (buf == NULL)
+        hydra_child_exit(2);
       free(buf);
 
       /* send ehlo and receive/ignore reply */
@@ -331,7 +348,7 @@ void service_smtp(char *ip, int32_t sp, unsigned char options, char *miscptr, FI
             hydra_send(sock, "STARTTLS\r\n", strlen("STARTTLS\r\n"), 0);
             free(buf);
             buf = hydra_receive_line(sock);
-            if (buf[0] != '2') {
+            if (buf == NULL || buf[0] != '2') {
               hydra_report(stderr, "[ERROR] TLS negotiation failed, no answer "
                                    "received from STARTTLS request\n");
             } else {

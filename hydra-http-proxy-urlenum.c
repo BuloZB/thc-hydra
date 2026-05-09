@@ -148,7 +148,11 @@ int32_t start_http_proxy_urlenum(int32_t s, char *ip, int32_t port, unsigned cha
         // recover challenge
         if (buf == NULL || pos == NULL || strlen(buf) < 4)
           return 3;
-        from64tobits((char *)buf1, pos);
+        if (from64tobits_n((char *)buf1, pos, sizeof(buf1)) < 0) {
+          hydra_report(stderr, "[ERROR] HTTP-PROXY-URLENUM NTLM AUTH: oversized challenge\n");
+          free(buf);
+          return 3;
+        }
         free(buf);
         buf = NULL;
         // Send response
@@ -219,7 +223,14 @@ int32_t start_http_proxy_urlenum(int32_t s, char *ip, int32_t port, unsigned cha
     }
   }
   // result analysis
-  ptr = ((char *)strchr(buf, ' ')) + 1;
+  {
+    char *space = strchr(buf, ' ');
+    ptr = space ? space + 1 : NULL;
+  }
+  if (ptr == NULL) {
+    hydra_report(stderr, "[ERROR] Malformed proxy response (no status code)\n");
+    return 1;
+  }
   if (*ptr == '2' || (*ptr == '3' && (*(ptr + 2) == '1' || *(ptr + 2) == '2')) || strncmp(ptr, "404", 4) == 0 || strncmp(ptr, "403", 4) == 0) {
     hydra_report_found_host(port, ip, "http-proxy", fp);
     if (fp != stdout)
