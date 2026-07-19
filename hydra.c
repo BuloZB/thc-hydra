@@ -49,6 +49,7 @@ void usage_http_proxy_urlenum(const char *service);
 void usage_snmp(const char *service);
 void usage_http(const char *service);
 void usage_smb2(const char *service);
+void usage_rtsp(const char *service);
 
 extern void service_asterisk(char *ip, int32_t sp, unsigned char options, char *miscptr, FILE *fp, int32_t port, char *hostname);
 extern void service_telnet(char *ip, int32_t sp, unsigned char options, char *miscptr, FILE *fp, int32_t port, char *hostname);
@@ -438,7 +439,7 @@ static const struct {
 #endif
                 SERVICE(rlogin),
                 SERVICE(rsh),
-                SERVICE(rtsp),
+                SERVICE3("rtsp", rtsp),
                 SERVICE(rpcap),
                 SERVICE3("s7-300", s7_300),
 #ifdef LIBSAPR3
@@ -3624,6 +3625,7 @@ int main(int argc, char *argv[]) {
           bail("Could not allocate enough memory for login file data");
         memset(login_ptr, 0, hydra_brains.sizelogin + hydra_brains.countlogin + 8);
         fill_mem(login_ptr, lfp, 0);
+        lfp = NULL;
       } else {
         login_ptr = hydra_options.login;
         hydra_brains.sizelogin = strlen(hydra_options.login) + 1;
@@ -3663,6 +3665,7 @@ int main(int argc, char *argv[]) {
           bail("Could not allocate enough memory for password file data");
         memset(pass_ptr, 0, hydra_brains.sizepass + hydra_brains.countpass + 8);
         fill_mem(pass_ptr, pfp, 0);
+        pfp = NULL;
       } else {
         if (hydra_options.pass != NULL) {
           pass_ptr = hydra_options.pass;
@@ -3721,6 +3724,7 @@ int main(int argc, char *argv[]) {
         bail("Could not allocate enough memory for colon file data");
       memset(csv_ptr, 0, hydra_brains.sizelogin + 2 * hydra_brains.countlogin + 8);
       fill_mem(csv_ptr, cfp, 1);
+      cfp = NULL;
       // printf("count: %d, size: %d\n", hydra_brains.countlogin,
       // hydra_brains.sizelogin); hydra_dump_data(csv_ptr,
       // hydra_brains.sizelogin
@@ -3785,6 +3789,7 @@ int main(int argc, char *argv[]) {
         bail("Could not allocate enough memory for target file data");
       memset(servers_ptr, 0, sizeinfile + countservers + 8);
       fill_mem(servers_ptr, ifp, 0);
+      ifp = NULL;
       sizeservers = sizeinfile;
       tmpptr = servers_ptr;
       for (i = 0; i < countinfile; i++) {

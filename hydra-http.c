@@ -40,9 +40,9 @@ static int32_t http_response_is_success(char *status, const char *response) {
 
   if (end_condition_type >= 0) {
 #ifdef HAVE_PCRE
-    return (hydra_string_match(response, end_condition) == end_condition_type);
+    return (hydra_string_match((char*)response, end_condition) == end_condition_type);
 #else
-    return ((strstr(response, end_condition) == NULL ? 0 : 1) == end_condition_type);
+    return ((strstr((char*)response, end_condition) == NULL ? 0 : 1) == end_condition_type);
 #endif
   }
 
@@ -81,6 +81,8 @@ int32_t start_http(int32_t s, char *ip, int32_t port, unsigned char options, cha
     add_header(&ptr_head, "Content-Length", "0", HEADER_TYPE_DEFAULT);
 
   header = stringify_headers(&ptr_head);
+  if (header == NULL)
+    return 3;
 
   buffer_size = strlen(header) + 500;
   if (!(buffer = malloc(buffer_size))) {
@@ -217,6 +219,10 @@ int32_t start_http(int32_t s, char *ip, int32_t port, unsigned char options, cha
       }
     } else {
       hydra_report(stderr, "[ERROR] It is not NTLM authentication type\n");
+      free(buffer);
+      free(header);
+      free(http_buf);
+      http_buf = NULL;
       return 3;
     }
 
