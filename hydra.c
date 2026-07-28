@@ -1507,26 +1507,37 @@ int32_t hydra_lookup_port(char *service) {
 
 // killit = 1 : kill(pid); fail = 1 : redo, fail = 2/3 : disable
 void hydra_kill_head(int32_t head_no, int32_t killit, int32_t fail) {
+  sigset_t chldmask, prevmask;
+  int32_t was_active;
+
   if (debug)
     printf("[DEBUG] head_no %d, kill %d, fail %d\n", head_no, killit, fail);
   if (head_no < 0)
     return;
-  if (hydra_heads[head_no]->active == HEAD_ACTIVE || (hydra_heads[head_no]->sp[0] > 2 && hydra_heads[head_no]->sp[1] > 2)) {
+  // This runs both from the main loop and from the SIGCHLD handler
+  // killed_childs(), which can interrupt the main loop anywhere in here. Block
+  // SIGCHLD so a head is torn down exactly once: otherwise both contexts see
+  // HEAD_ACTIVE, hydra_brains.active is decremented twice for the single
+  // increment in hydra_spawn_head(), and once it drops below the number of
+  // running heads hydra_check_for_exit_condition() ends the attack while
+  // children are still alive.
+  sigemptyset(&chldmask);
+  sigaddset(&chldmask, SIGCHLD);
+  sigprocmask(SIG_BLOCK, &chldmask, &prevmask);
+  // take the state once and use it for every decision below, so the counter
+  // update and the HEAD_ACTIVE -> HEAD_UNUSED transition cannot disagree
+  was_active = hydra_heads[head_no]->active == HEAD_ACTIVE;
+  if (was_active || (hydra_heads[head_no]->sp[0] > 2 && hydra_heads[head_no]->sp[1] > 2)) {
     close(hydra_heads[head_no]->sp[0]);
     close(hydra_heads[head_no]->sp[1]);
   }
   if (killit) {
     if (hydra_heads[head_no]->pid > 0)
       kill(hydra_heads[head_no]->pid, SIGTERM);
-    // only decrement for a head that is actually counted in hydra_brains.active.
-    // This function runs both from the main loop and from the SIGCHLD handler,
-    // so the same head can be killed twice; an unguarded decrement then drops
-    // the counter below the number of running heads and
-    // hydra_check_for_exit_condition() ends the attack while children are alive.
-    if (hydra_heads[head_no]->active == HEAD_ACTIVE)
+    if (was_active)
       hydra_brains.active--;
   }
-  if (hydra_heads[head_no]->active == HEAD_ACTIVE) {
+  if (was_active) {
     hydra_heads[head_no]->active = HEAD_UNUSED;
     hydra_targets[hydra_heads[head_no]->target_no]->use_count--;
   }
@@ -1554,6 +1565,7 @@ void hydra_kill_head(int32_t head_no, int32_t killit, int32_t fail) {
     //    NULL;
   }
   (void)waitpid(-1, NULL, WNOHANG);
+  sigprocmask(SIG_SETMASK, &prevmask, NULL);
 }
 
 void hydra_increase_fail_count(int32_t target_no, int32_t head_no) {
