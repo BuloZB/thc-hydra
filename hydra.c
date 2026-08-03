@@ -1507,20 +1507,37 @@ int32_t hydra_lookup_port(char *service) {
 
 // killit = 1 : kill(pid); fail = 1 : redo, fail = 2/3 : disable
 void hydra_kill_head(int32_t head_no, int32_t killit, int32_t fail) {
+  sigset_t chldmask, prevmask;
+  int32_t was_active;
+
   if (debug)
     printf("[DEBUG] head_no %d, kill %d, fail %d\n", head_no, killit, fail);
   if (head_no < 0)
     return;
-  if (hydra_heads[head_no]->active == HEAD_ACTIVE || (hydra_heads[head_no]->sp[0] > 2 && hydra_heads[head_no]->sp[1] > 2)) {
+  // This runs both from the main loop and from the SIGCHLD handler
+  // killed_childs(), which can interrupt the main loop anywhere in here. Block
+  // SIGCHLD so a head is torn down exactly once: otherwise both contexts see
+  // HEAD_ACTIVE, hydra_brains.active is decremented twice for the single
+  // increment in hydra_spawn_head(), and once it drops below the number of
+  // running heads hydra_check_for_exit_condition() ends the attack while
+  // children are still alive.
+  sigemptyset(&chldmask);
+  sigaddset(&chldmask, SIGCHLD);
+  sigprocmask(SIG_BLOCK, &chldmask, &prevmask);
+  // take the state once and use it for every decision below, so the counter
+  // update and the HEAD_ACTIVE -> HEAD_UNUSED transition cannot disagree
+  was_active = hydra_heads[head_no]->active == HEAD_ACTIVE;
+  if (was_active || (hydra_heads[head_no]->sp[0] > 2 && hydra_heads[head_no]->sp[1] > 2)) {
     close(hydra_heads[head_no]->sp[0]);
     close(hydra_heads[head_no]->sp[1]);
   }
   if (killit) {
     if (hydra_heads[head_no]->pid > 0)
       kill(hydra_heads[head_no]->pid, SIGTERM);
-    hydra_brains.active--;
+    if (was_active)
+      hydra_brains.active--;
   }
-  if (hydra_heads[head_no]->active == HEAD_ACTIVE) {
+  if (was_active) {
     hydra_heads[head_no]->active = HEAD_UNUSED;
     hydra_targets[hydra_heads[head_no]->target_no]->use_count--;
   }
@@ -1548,6 +1565,7 @@ void hydra_kill_head(int32_t head_no, int32_t killit, int32_t fail) {
     //    NULL;
   }
   (void)waitpid(-1, NULL, WNOHANG);
+  sigprocmask(SIG_SETMASK, &prevmask, NULL);
 }
 
 void hydra_increase_fail_count(int32_t target_no, int32_t head_no) {
@@ -2339,7 +2357,7 @@ int main(int argc, char *argv[]) {
   size_t countinfile = 1, sizeinfile = 0;
   uint64_t math2;
   int32_t i = 0, j = 0, k, error = 0, modusage = 0, ignore_restore = 0, do_switch;
-  int32_t head_no = 0, target_no = 0, exit_condition = 0, readres;
+  int32_t head_no = 0, target_no = 0, exit_condition = 0, readres, active_heads = 0;
   time_t starttime, elapsed_status, elapsed_restore, status_print = 59, tmp_time;
   char *tmpptr, *tmpptr2, *tmpptr3;
   char rc, buf[MAXBUF];
@@ -4562,25 +4580,28 @@ int main(int argc, char *argv[]) {
   printf(" found\n");
 
   error += j;
-  k = 0;
+  // keep k as the target-derived count computed above: it is reported as a
+  // target count further down. The still-running worker heads are a separate
+  // quantity and get their own variable.
+  active_heads = 0;
   for (i = 0; i < hydra_options.max_use; i++)
     if (hydra_heads[i]->active == HEAD_ACTIVE)
-      k++;
+      active_heads++;
 
-  if (error == 0 && k == 0) {
+  if (error == 0 && active_heads == 0) {
     process_restore = 0;
     unlink(RESTOREFILE);
   } else {
     process_restore = 1;
-    if (hydra_options.cidr == 0 && k == 0) {
+    if (hydra_options.cidr == 0 && active_heads == 0) {
       printf("[INFO] Writing restore file because %d server scan%s could not "
              "be completed\n",
              j + error, j + error == 1 ? "" : "s");
       hydra_restore_write(1);
-    } else if (k > 0) {
+    } else if (active_heads > 0) {
       printf("[WARNING] Writing restore file because %d final worker threads "
              "did not complete until end.\n",
-             k);
+             active_heads);
       hydra_restore_write(1);
     }
     process_restore = 0;
